@@ -1,0 +1,106 @@
+name: Build Android APK (Fallback Worker)
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: 'Job ID from Bot'
+        required: true
+      userId:
+        description: 'User ID'
+        required: true
+      payload:
+        description: 'Build Payload (JSON)'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Prepare Project
+        run: |
+          PAYLOAD='${{ github.event.inputs.payload }}'
+          URL=$(echo "$PAYLOAD" | jq -r '.url // empty')
+          ZIP_ASSET_URL=$(echo "$PAYLOAD" | jq -r '.zipAssetUrl // empty')
+
+          if [ -n "$ZIP_ASSET_URL" ]; then
+            echo "Downloading project ZIP from GitHub Release asset..."
+            curl -fL \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/octet-stream" \
+              -o project.zip \
+              "$ZIP_ASSET_URL"
+          elif [ -n "$URL" ]; then
+            echo "Downloading project ZIP from URL..."
+            wget -O project.zip "$URL"
+          else
+            echo "::error::Payload has neither 'url' nor 'zipAssetUrl' — nothing to build."
+            exit 1
+          fi
+
+          mkdir -p project
+          unzip -o project.zip -d project
+
+      - name: Configure Native Android Toolchain
+        run: |
+          cd project
+          mkdir -p android_config_check
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "org.gradle.daemon=false" >> gradle.properties 2>/dev/null || echo "org.gradle.daemon=false" > gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m" >> gradle.properties
+          echo "android.useAndroidX=true" >> gradle.properties
+          echo "android.enableJetifier=true" >> gradle.properties
+          rmdir android_config_check 2>/dev/null || true
+
+      - name: Install Android NDK (for native code)
+        run: |
+          cd project
+          NDK_VERSION=$(grep -oE 'ndkVersion[[:space:]]+["'"'"']([^"'"'"']+)' app/build.gradle 2>/dev/null | grep -oE '[0-9][0-9.]+' | head -1)
+          if [ -z "$NDK_VERSION" ]; then
+            NDK_VERSION="26.1.10909125"
+          fi
+          echo "Installing NDK $NDK_VERSION..."
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$NDK_VERSION" || echo "::warning::NDK install failed, continuing (project may not need it)"
+
+      - name: Build APK
+        run: |
+          cd project
+          BUILD_TYPE=$(echo '${{ github.event.inputs.payload }}' | jq -r '.buildType // "release"')
+          chmod +x gradlew
+          ./gradlew clean
+          if [ "$BUILD_TYPE" = "debug" ]; then
+            ./gradlew assembleDebug
+          else
+            ./gradlew assembleRelease
+          fi
+
+      - name: Locate APK
+        id: locate
+        run: |
+          cd project
+          BUILD_TYPE=$(echo '${{ github.event.inputs.payload }}' | jq -r '.buildType // "release"')
+          APK_PATH=$(find app/build/outputs/apk -name "*${BUILD_TYPE}*.apk" -type f | head -1)
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH=$(find app/build/outputs/apk -name "*.apk" -type f | head -1)
+          fi
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No APK produced — check the Build APK step output above."
+            exit 1
+          fi
+          echo "apk_path=project/$APK_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.inputs.jobId }}
+          path: ${{ steps.locate.outputs.apk_path }}
