@@ -28,7 +28,7 @@ jobs:
       - name: 📥 Download ZIP dari Release
         run: |
           wget -q -O project.zip \
-            "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/Tr4sflow.Execution.zip"
+            "https://github.com/${{ github.repository }}/releases/download/${{ env.RELEASE_TAG }}/Motion.zip"
           echo "✅ $(du -sh project.zip | cut -f1)"
 
       - name: 📦 Ekstrak Project
