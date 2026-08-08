@@ -35,7 +35,6 @@ jobs:
         run: |
           mkdir -p project_raw
           unzip -qq project.zip -d project_raw
-          # Deteksi root folder otomatis (handles MORTIX/, mortix/, atau flat)
           ROOT=$(unzip -Z1 project.zip | head -1 | sed 's|/.*||')
           if [ -d "project_raw/$ROOT/android" ]; then
             echo "PROJECT_DIR=project_raw/$ROOT" >> $GITHUB_ENV
@@ -47,6 +46,26 @@ jobs:
         run: |
           mkdir -p ${{ env.PROJECT_DIR }}/android
           echo "sdk.dir=$ANDROID_HOME" > ${{ env.PROJECT_DIR }}/android/local.properties
+
+      - name: 🖼️ Fix Fake PNG Icons (JPEG renamed as PNG)
+        run: |
+          sudo apt-get install -y imagemagick -qq
+          find ${{ env.PROJECT_DIR }}/android/app/src/main/res -name "*.png" | while read f; do
+            FTYPE=$(file -b "$f" | cut -d' ' -f1)
+            if [ "$FTYPE" = "JPEG" ]; then
+              echo "Converting JPEG→PNG: $f"
+              convert "$f" /tmp/_icon_fixed.png && mv /tmp/_icon_fixed.png "$f"
+            fi
+          done
+
+      - name: ⚙️ Patch build.gradle.kts
+        run: |
+          GRADLE=${{ env.PROJECT_DIR }}/android/app/build.gradle.kts
+          sed -i 's/compileSdk = 35/compileSdk = 36/' "$GRADLE"
+          sed -i 's/targetSdk = 35/targetSdk = 36/' "$GRADLE"
+          sed -i 's/ndkVersion = "28.2.13676358"/ndkVersion = "27.0.12077973"/' "$GRADLE"
+          echo "✅ patched"
+          grep -E "compileSdk|targetSdk|ndkVersion" "$GRADLE"
 
       - name: ☕ Setup Java 17
         uses: actions/setup-java@v4
