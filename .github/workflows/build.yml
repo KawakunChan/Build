@@ -33,11 +33,20 @@ jobs:
 
       - name: 📦 Ekstrak Project
         run: |
-          mkdir -p project
-          unzip -qq project.zip -d project
+          mkdir -p project_raw
+          unzip -qq project.zip -d project_raw
+          # Deteksi root folder otomatis (handles MORTIX/, mortix/, atau flat)
+          ROOT=$(unzip -Z1 project.zip | head -1 | sed 's|/.*||')
+          if [ -d "project_raw/$ROOT/android" ]; then
+            echo "PROJECT_DIR=project_raw/$ROOT" >> $GITHUB_ENV
+          else
+            echo "PROJECT_DIR=project_raw" >> $GITHUB_ENV
+          fi
 
       - name: 🔧 Fix Android SDK Path
-        run: echo "sdk.dir=$ANDROID_HOME" > project/android/local.properties
+        run: |
+          mkdir -p ${{ env.PROJECT_DIR }}/android
+          echo "sdk.dir=$ANDROID_HOME" > ${{ env.PROJECT_DIR }}/android/local.properties
 
       - name: ☕ Setup Java 17
         uses: actions/setup-java@v4
@@ -61,17 +70,17 @@ jobs:
           cache: true
 
       - name: 📚 Flutter Pub Get
-        working-directory: project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter pub get
 
       - name: 🔨 Build APK Release
-        working-directory: project
+        working-directory: ${{ env.PROJECT_DIR }}
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: 🏷️ Rename APK
         run: |
           DATE=$(date +%Y%m%d-%H%M)
-          cp project/build/app/outputs/flutter-apk/app-release.apk \
+          cp ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/app-release.apk \
              "mortix-${DATE}.apk"
           echo "APK_FILE=mortix-${DATE}.apk" >> $GITHUB_ENV
 
